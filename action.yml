@@ -1,0 +1,36 @@
+name: deployhook
+description: Ask a deployhook receiver to update the container image built by this workflow.
+inputs:
+  url:
+    description: The receiver's hook URL, e.g. https://deploy.example.com/hook
+    required: true
+  audience:
+    description: OIDC audience the receiver expects (its DEPLOYHOOK_AUDIENCE).
+    required: true
+  image:
+    description: Image to update, without a tag. Defaults to <registry>/<owner>/<repo> on the receiver.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        HOOK_URL: ${{ inputs.url }}
+        AUDIENCE: ${{ inputs.audience }}
+        IMAGE: ${{ inputs.image }}
+      run: |
+        set -euo pipefail
+        if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+          echo "::error::No OIDC token available. Add 'permissions: id-token: write' to the job."
+          exit 1
+        fi
+        token=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          --get --data-urlencode "audience=$AUDIENCE" "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r .value)
+        echo "::add-mask::$token"
+        args=()
+        if [ -n "$IMAGE" ]; then
+          args+=(--get --data-urlencode "image=$IMAGE")
+        fi
+        curl -sS --fail-with-body --max-time 600 -X POST \
+          -H "Authorization: Bearer $token" "${args[@]}" "$HOOK_URL"
